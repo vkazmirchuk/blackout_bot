@@ -52,11 +52,16 @@ func getData() {
 	endDate := time.Now().AddDate(0, 0, intervalInDays).Format(dateFormat)
 
 	reqUrl := fmt.Sprintf("%s?region=%d&district=%s&begin_date=%s&end_date=%s", baseURL, regionNumber, districtID, currentDate, endDate)
+
+	log.Println("GET:", reqUrl)
+
 	resp, err := http.Get(reqUrl)
 	if err != nil {
 		panic(err)
 	}
 	defer resp.Body.Close()
+
+	log.Println("RESP:", resp.ContentLength, "bytes")
 
 	html, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
