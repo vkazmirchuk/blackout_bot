@@ -10,10 +10,12 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
+	"github.com/goodsign/monday"
 )
 
 const (
 	dateFormat     = "02.01.2006"
+	dateTimeFormat = "02.01.2006 15:04"
 	intervalInDays = 7                // сколько дней запрашивать
 	placeFilter    = "Беляевская"     // какой нас. пункт искать
 	timeout        = 30 * time.Minute // время опроса mrsk
@@ -23,7 +25,7 @@ const (
 )
 
 var bot *tgbotapi.BotAPI
-var past = map[string]bool{}
+var past = make([]string, 0)
 var lastMsg = "🤷‍♂️‍"
 var chatID string
 
@@ -61,8 +63,6 @@ func getData() {
 	}
 	defer resp.Body.Close()
 
-	log.Println("RESP:", resp.ContentLength, "bytes")
-
 	html, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
 		panic(err)
@@ -84,17 +84,47 @@ func parseHTML(html *goquery.Document) {
 
 		// ищем нужный нас. пункт
 		if strings.Contains(place.Text(), placeFilter) {
-			msg := fmt.Sprintf("⚠️ с %s %s до %s %s ⚠️", bdate.Text(), bdate.Next().Text(), edate.Text(), edate.Next().Text())
 
-			if past[msg] {
-				return
-			}
-
-			if err := sendMessageToChat(msg); err != nil {
+			startDateTime, err := time.Parse(dateTimeFormat, fmt.Sprintf("%s %s", bdate.Text(), bdate.Next().Text()))
+			if err != nil {
 				log.Println(err)
 				return
 			}
-			past[msg] = true
+
+			endDateTime, err := time.Parse(dateTimeFormat, fmt.Sprintf("%s %s", edate.Text(), edate.Next().Text()))
+			if err != nil {
+				log.Println(err)
+				return
+			}
+
+			msgStart := monday.Format(startDateTime, "Mon 02 Jan 15:04", monday.LocaleRuRU)
+			msgEnd := monday.Format(endDateTime, "Mon 02 Jan 15:04", monday.LocaleRuRU)
+			duration := endDateTime.Sub(startDateTime)
+
+			if startDateTime.Day() == endDateTime.Day() {
+				msgEnd = endDateTime.Format("15:04")
+			}
+
+			msg := fmt.Sprintf("⚠️ %s до %s (отключат на %s) ⚠️", msgStart, msgEnd, duration)
+
+			for _, pm := range past {
+				if pm == msg {
+					return
+				}
+			}
+
+			msgTg, err := sendMessageToChat(msg)
+			if err != nil {
+				log.Println(err)
+				return
+			}
+
+			if err := PinnedMessage(msgTg); err != nil {
+				log.Println(err)
+				return
+			}
+
+			past = append(past, msg)
 			lastMsg = msg
 		}
 	})
@@ -119,7 +149,7 @@ func readCommands() {
 
 			log.Printf("User %s requested data", update.Message.From.String())
 
-			if err := sendMessageToChat(lastMsg); err != nil {
+			if _, err := sendMessageToChat(lastMsg); err != nil {
 				log.Println(err)
 				continue
 			}
@@ -127,11 +157,23 @@ func readCommands() {
 	}
 }
 
-func sendMessageToChat(msg string) error {
-	_, err := bot.Send(tgbotapi.NewMessageToChannel(chatID, msg))
+func sendMessageToChat(msg string) (msgTg tgbotapi.Message, err error) {
+	msgTg, err = bot.Send(tgbotapi.NewMessageToChannel(chatID, msg))
 	if err != nil {
-		return err
+		return msgTg, err
 	}
-	log.Println("Sent to chat:", msg)
+
+	log.Println("Sent to chat and pinned:", msg)
+
+	return msgTg, err
+}
+
+func PinnedMessage(msg tgbotapi.Message) error {
+	_, err := bot.PinChatMessage(tgbotapi.PinChatMessageConfig{
+		ChatID:              msg.Chat.ID,
+		MessageID:           msg.MessageID,
+		DisableNotification: false,
+	})
+
 	return err
 }
